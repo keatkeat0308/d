@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Disney Fireworks - Immersive Commander</title>
+    <!-- 引入 MediaPipe 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020205; 
+            overflow: hidden;
+            touch-action: none;
+            cursor: none; /* 沉浸模式隐藏鼠标 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+
+        /* 鼠标移动时显示光标，方便点击按钮 */
+        body:hover {
+            cursor: default;
+        }
+
+        canvas#canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1; 
+        }
+        
+        /* 摄像头画中画容器 */
+        .camera-container {
+            position: absolute;
+            top: 30px;
+            right: 10px;
+            width: 140px; 
+            height: 105px; 
+            z-index: 20;   
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(0, 0, 0, 0.6); 
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            transition: opacity 0.5s, transform 0.3s;
+            backdrop-filter: blur(4px);
+        }
+        
+        .camera-container:hover {
+            opacity: 1;
+            transform: scale(1.05);
+            border-color: rgba(255, 255, 255, 0.4);
+            cursor: default;
+        }
+
+        /* 摄像头视频流 */
+        .input_video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* 镜像翻转 */
+            opacity: 0.5; 
+        }
+
+        /* 手势识别绘制层 */
+        #gesture_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* 镜像翻转 */
+        }
+
+        /* 加载提示 */
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 235, 205, 0.9);
+            font-family: "Georgia", serif;
+            font-size: 18px;
+            letter-spacing: 3px;
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+            transition: opacity 1s;
+            text-shadow: 0 0 10px rgba(255, 200, 100, 0.5);
+        }
+        
+        /* 状态指示器 */
+        #status {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 25;
+            pointer-events: none;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: right;
+            text-shadow: 0 1px 4px black;
+        }
+
+        /* 指引提示 */
+        #guide {
+            position: absolute;
+            top: 20px;
+            left: 10px;
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 11px;
+            z-index: 20;
+            pointer-events: none;
+            line-height: 1.6;
+            background: linear-gradient(to right, rgba(0,0,0,0.6), transparent);
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 2px solid rgba(255,255,255,0.2);
+        }
+        
+        .key-hint {
+            color: #ffaa55;
+            font-weight: bold;
+        }
+
+        /* 音乐按钮样式 - 调整为深色沉浸风格 */
+        #musicBtn {
+            position: fixed; 
+            bottom: 20px; 
+            left: 20px; 
+            z-index: 30; 
+            background-color: rgba(255, 105, 180, 0.2); 
+            color: rgba(255, 255, 255, 0.9); 
+            border: 1px solid rgba(255, 105, 180, 0.5); 
+            border-radius: 30px; 
+            padding: 8px 16px; 
+            font-family: 'Segoe UI', sans-serif; 
+            font-size: 12px;
+            font-weight: bold; 
+            box-shadow: 0 0 10px rgba(255, 105, 180, 0.2); 
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            outline: none;
+            backdrop-filter: blur(2px);
+        }
+
+        #musicBtn:hover {
+            background-color: rgba(255, 105, 180, 0.4);
+            box-shadow: 0 0 15px rgba(255, 105, 180, 0.5);
+            transform: scale(1.05);
+        }
+
+        /* 脉冲动画，吸引注意 */
+        @keyframes pulse-btn {
+            0% { box-shadow: 0 0 0 0 rgba(255, 105, 180, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 105, 180, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 105, 180, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 音乐播放器组件 -->
+    <audio id="bgMusic" loop preload="auto">
+        <source src="https://github.com/keatkeat0308/testingd/raw/refs/heads/main/B&B.mp3.mp3" type="audio/mpeg">
+        您的浏览器不支持音频元素。
+    </audio>
+
+    <button id="musicBtn" onclick="toggleMusic()">
+        🎵 BGM OFF
+    </button>
+
+    <!-- 加载与状态 -->
+    <div id="loading">
+        正在连接魔法信号...<br>
+        <span style="font-size:12px; opacity:0.6; font-family:sans-serif; margin-top:8px; display:block;">
+            请允许摄像头权限，或按数字键 1-5 控制
+        </span>
+    </div>
+    
+    <div id="status">System Ready</div>
+    
+    <div id="guide">
+        <span class="key-hint">5</span> Fingers / Step 1: <b> Fireworks 1</b><br>
+        <span class="key-hint">4</span> Fingers / Step 2: <b> Fireworks 2</b><br>
+        <span class="key-hint">3</span> Fingers / Step 3: <b> Fireworks 3</b><br>
+        <span class="key-hint">2</span> Fingers / Step 4: <b> Fireworks 4</b><br>
+        <span class="key-hint">1</span> Finger &nbsp;/ Step 5: <b> Finale</b><br>
+        <span class="key-hint">Fist</span> (0) / Final Step: <b>Ending 2026</b>
+    </div>
+
+    <!-- 右下角画中画 -->
+    <div class="camera-container">
+        <video class="input_video"></video>
+        <canvas id="gesture_canvas"></canvas>
+    </div>
+    
+    <!-- 主烟花画布 -->
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // --- 音乐控制逻辑 ---
+        const music = document.getElementById("bgMusic");
+        const musicBtn = document.getElementById("musicBtn");
+        let isMusicPlaying = false;
+
+        // 初始音量
+        music.volume = 0.5;
+
+        function toggleMusic() {
+            if (isMusicPlaying) {
+                music.pause();
+                updateMusicBtnState(false);
+            } else {
+                const playPromise = music.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(_ => {
+                        updateMusicBtnState(true);
+                    })
+                    .catch(error => {
+                        console.error("播放失败:", error);
+                        // 用户交互不足可能导致失败，保持关闭状态
+                        updateMusicBtnState(false);
+                    });
+                }
+            }
+        }
+
+        function updateMusicBtnState(playing) {
+            isMusicPlaying = playing;
+            if (playing) {
+                musicBtn.innerHTML = "🎵 BGM ON";
+                musicBtn.style.backgroundColor = "rgba(255, 105, 180, 0.5)";
+                musicBtn.style.boxShadow = "0 0 15px rgba(255, 105, 180, 0.6)";
+                musicBtn.style.animation = "none"; // 播放后停止脉冲
+            } else {
+                musicBtn.innerHTML = "🔇 BGM OFF";
+                musicBtn.style.backgroundColor = "rgba(100, 100, 100, 0.3)";
+                musicBtn.style.boxShadow = "none";
+            }
+        }
+
+        // --- 主程序逻辑 ---
+        window.addEventListener('load', () => {
+            // 尝试自动播放音乐
+            const autoPlayPromise = music.play();
+            if (autoPlayPromise !== undefined) {
+                autoPlayPromise.then(_ => {
+                    updateMusicBtnState(true);
+                }).catch(error => {
+                    console.log("浏览器阻挡了自动播放，等待用户点击。");
+                    musicBtn.style.animation = "pulse-btn 2s infinite"; // 提示用户点击
+                });
+            }
+
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d', { alpha: false }); 
+            const loadingText = document.getElementById('loading');
+            const statusText = document.getElementById('status');
+
+            // 手势绘制画布
+            const gestureCanvas = document.getElementById('gesture_canvas');
+            const gestureCtx = gestureCanvas.getContext('2d');
+
+            let width, height, scale;
+            let particles = []; 
+            let comets = [];    
+            let smokes = [];
+            let stars = []; 
+            
+            // --- 核心控制变量 ---
+            let castleFlash = 0; 
+            let activeTimeouts = []; 
+            let currentChapter = 0;  // 0=Ready
+
+            // --- 任务调度器 ---
+            function schedule(fn, delay) {
+                const id = setTimeout(() => {
+                    fn();
+                }, delay);
+                activeTimeouts.push(id);
+                return id;
+            }
+
+            function stopCurrentChapter() {
+                activeTimeouts.forEach(id => clearTimeout(id));
+                activeTimeouts = [];
+                // 仅清除正在上升的彗星，让已爆炸的粒子自然消散
+                comets = []; 
+            }
+
+            // --- 城堡资源 ---
+            let castleLayout = { width: 0, height: 0, x: 0, top: 0 };
+            const castleImg = new Image();
+            let castleLoaded = false; 
+
+            castleImg.onload = () => { castleLoaded = true; updateCastleLayout(); };
+            // 尝试加载图片，失败则使用绘制逻辑
+            castleImg.src = 'https://youke2.picui.cn/s1/2025/12/13/693d62306e734.png';
+            castleImg.onerror = () => { console.log("Castle image fallback active."); castleLoaded = false; };
+
+            // --- 资源预渲染 (性能优化) ---
+            const starCanvas = document.createElement('canvas'); starCanvas.width = 32; starCanvas.height = 32;
+            const sCtx = starCanvas.getContext('2d'); sCtx.fillStyle = '#FFFFFF'; sCtx.beginPath(); sCtx.arc(16, 16, 6, 0, Math.PI*2); sCtx.fill();
+            const gradS = sCtx.createRadialGradient(16, 16, 6, 16, 16, 16); gradS.addColorStop(0, 'rgba(255, 220, 100, 0.8)'); gradS.addColorStop(1, 'rgba(255, 200, 50, 0)'); sCtx.fillStyle = gradS; sCtx.beginPath(); sCtx.arc(16, 16, 16, 0, Math.PI*2); sCtx.fill();
+
+            const glowCanvas = document.createElement('canvas'); glowCanvas.width = 32; glowCanvas.height = 32;
+            const gCtx = glowCanvas.getContext('2d'); const gradG = gCtx.createRadialGradient(16, 16, 0, 16, 16, 16); gradG.addColorStop(0, 'rgba(255, 255, 255, 1)'); gradG.addColorStop(0.4, 'rgba(255, 255, 255, 0.2)'); gradG.addColorStop(1, 'rgba(255, 255, 255, 0)'); gCtx.fillStyle = gradG; gCtx.fillRect(0, 0, 32, 32);
+
+            const smokeCanvas = document.createElement('canvas'); smokeCanvas.width = 128; smokeCanvas.height = 128;
+            const smCtx = smokeCanvas.getContext('2d'); const smGrad = smCtx.createRadialGradient(64, 64, 0, 64, 64, 64); smGrad.addColorStop(0, 'rgba(160, 160, 170, 0.8)'); smGrad.addColorStop(0.3, 'rgba(120, 120, 130, 0.3)'); smGrad.addColorStop(1, 'rgba(80, 80, 90, 0)'); smCtx.fillStyle = smGrad; smCtx.fillRect(0, 0, 128, 128);
+
+            const particleCache = {};
+            const shapeColors = ['#FF3333', '#33FF33', '#3355FF', '#FFFF33', '#FF33FF', '#33FFFF', '#FFFFFF'];
+            shapeColors.forEach(color => {
+                const c = document.createElement('canvas'); c.width = 16; c.height = 16;
+                const cx = c.getContext('2d'); const grad = cx.createRadialGradient(8, 8, 0, 8, 8, 8); grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(0.4, color); grad.addColorStop(1, 'rgba(0,0,0,0)'); cx.fillStyle = grad; cx.beginPath(); cx.arc(8, 8, 8, 0, Math.PI*2); cx.fill();
+                particleCache[color] = c;
+            });
+
+            function initStars() {
+                stars = [];
+                for (let i = 0; i < 40; i++) {
+                    stars.push({ x: Math.random()*width, y: Math.random()*(height*0.65), size: Math.random()*2*scale, alpha: Math.random()*0.8, flickerSpeed: 0.01+Math.random()*0.03 });
+                }
+            }
+
+            function updateCastleLayout() {
+                if (castleLoaded && castleImg.naturalWidth > 0) {
+                    const isPortrait = height > width;
+                    const widthRatio = isPortrait ? 1.0 : 0.65; 
+                    castleLayout.width = width * widthRatio;
+                    castleLayout.height = castleLayout.width * (castleImg.height / castleImg.width);
+                    castleLayout.x = (width - castleLayout.width) / 2;
+                    castleLayout.top = height - castleLayout.height;
+                } else {
+                    // Fallback layout
+                    castleLayout.width = width * 0.4; 
+                    castleLayout.height = castleLayout.width * 1.0; 
+                    castleLayout.x = (width - castleLayout.width) / 2;
+                    castleLayout.top = height - castleLayout.height * 0.85;
+                }
+            }
+
+            function resize() {
+                width = canvas.width = window.innerWidth;
+                height = canvas.height = window.innerHeight;
+                gestureCanvas.width = 140; 
+                gestureCanvas.height = 105;
+                
+                scale = Math.min(width, height) / 900; 
+                scale = Math.max(0.6, scale); 
+                updateCastleLayout();
+                initStars();
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            const random = (min, max) => Math.random() * (max - min) + min;
+
+            // --- 粒子类定义 ---
+            class Smoke { constructor(x, y) { this.x = x; this.y = y; this.vx = random(-0.25, 0.25) * scale; this.vy = random(-0.15, 0.15) * scale; this.size = random(20, 45) * scale; this.growth = random(0.15, 0.3) * scale; this.life = random(60, 100); this.maxLife = this.life; this.alphaStart = random(0.1, 0.25); } update() { this.x += this.vx; this.y += this.vy; this.size += this.growth; this.life--; return this.life > 0; } draw() { const progress = this.life / this.maxLife; const currentAlpha = this.alphaStart * Math.pow(progress, 2.0); if (currentAlpha > 0.005) { ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = currentAlpha; const drawSize = this.size * 2; ctx.drawImage(smokeCanvas, this.x - drawSize/2, this.y - drawSize/2, drawSize, drawSize); ctx.restore(); } } }
+            
+            class Spark { constructor(x, y, vx, vy, isGlitter = false) { this.x = x; this.y = y; this.isGlitter = isGlitter; if (isGlitter) { this.vx = vx * 0.1 + random(-0.5, 0.5) * scale; this.vy = vy * 0.1 + random(-0.5, 0.5) * scale; this.friction = 0.9; this.gravity = 0.02 * scale; this.life = random(60, 100); this.maxLife = this.life; this.size = random(1, 2.5) * scale; this.flickerSpeed = random(0.3, 0.6); } else { this.vx = vx * 0.3 + random(-1.5, 1.5) * scale; this.vy = vy * 0.3 + random(-1.5, 1.5) * scale; this.friction = 0.95; this.gravity = 0.08 * scale; this.life = random(40, 80); this.maxLife = this.life; this.size = random(1, 3) * scale; this.flickerSpeed = random(0.1, 0.3); } this.flickerOffset = random(0, 100); } update() { this.vx *= this.friction; this.vy *= this.friction; this.vy += this.gravity; this.x += this.vx; this.y += this.vy; this.life -= 1; return this.life > 0; } draw() { const flicker = Math.abs(Math.sin(this.life * this.flickerSpeed + this.flickerOffset)); const baseAlpha = this.life / this.maxLife; let finalAlpha, r, g, b; if (this.isGlitter) { finalAlpha = baseAlpha * (0.3 + flicker * 0.7); r = 255; g = 255; b = 255; } else { finalAlpha = baseAlpha * (0.3 + flicker * 0.7); r = 255; g = 220; b = 150; if (this.life < 20) { g = 150; b = 50; } } ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${finalAlpha})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); } }
+            
+            class Comet { constructor(x, y, angle, speed, style = 'normal', color = null) { this.x = x; this.y = y; this.style = style; this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed; this.color = color; if (this.color) { this.friction = 0.99; this.gravity = 0.105 * scale; this.life = 140; this.headSize = 7 * scale; this.maxTrail = 20; } else { if (style === 'hover') { this.friction = 0.99; this.gravity = 0.09 * scale; this.life = 150; this.headSize = 9 * scale; this.maxTrail = 25; } else if (style === 'thin') { this.friction = 0.975; this.gravity = 0.1 * scale; this.life = 70; this.headSize = 3 * scale; this.maxTrail = 12; } else { this.friction = 0.99; this.gravity = 0.12 * scale; this.life = 100; this.headSize = 7 * scale; this.maxTrail = 20; } } this.trail = []; } update() { this.trail.push({x: this.x, y: this.y}); if(this.trail.length > this.maxTrail) this.trail.shift(); this.vx *= this.friction; this.vy *= this.friction; this.vy += this.gravity; this.x += this.vx; this.y += this.vy; this.life -= 1; const emission = (this.style === 'thin') ? 1 : ((this.style === 'hover') ? 5 : 3); if (this.style !== 'thin' || Math.random() > 0.5) { for(let i=0; i<emission; i++) { const t = Math.random(); const last = this.trail[this.trail.length-1] || {x:this.x, y:this.y}; const lerpX = last.x + (this.x - last.x) * t; const lerpY = last.y + (this.y - last.y) * t; particles.push(new Spark(lerpX + random(-2,2), lerpY + random(-2,2), this.vx, this.vy, false)); } } if(this.style !== 'thin' && this.life % 2 === 0) smokes.push(new Smoke(this.x, this.y)); if (this.style === 'thin' && this.life % 4 === 0) { smokes.push(new Smoke(this.x, this.y)); } if (this.style === 'thin' && this.life === 0) { for(let k=0; k<8; k++) particles.push(new Spark(this.x, this.y, this.vx, this.vy, true)); } return this.life > 0; } draw() { if (this.color) { this.drawColored(); return; } for (let i = 0; i < this.trail.length; i++) { const point = this.trail[i]; const progress = i / this.trail.length; const size = this.headSize * 0.8 * progress; const alpha = progress * (this.style === 'hover' ? 0.95 : 0.8); ctx.beginPath(); ctx.arc(point.x, point.y, size, 0, Math.PI * 2); if(this.style === 'thin') ctx.fillStyle = `rgba(240, 245, 255, ${alpha * 0.8})`; else if(this.style === 'hover') ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`; else ctx.fillStyle = `rgba(255, ${200 + progress * 55}, ${100 + progress * 155}, ${alpha})`; ctx.fill(); } ctx.beginPath(); ctx.arc(this.x, this.y, this.headSize, 0, Math.PI*2); ctx.fillStyle = '#fff'; const blur = (this.style === 'thin') ? 8 : ((this.style === 'hover') ? 30 : 20); ctx.shadowBlur = blur * scale; ctx.shadowColor = '#ffe'; ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(this.x, this.y, this.headSize * 0.6, 0, Math.PI*2); ctx.fill(); } drawColored() { for (let i = 0; i < this.trail.length; i++) { const point = this.trail[i]; const progress = i / this.trail.length; const size = this.headSize * 0.8 * progress; const alpha = progress * 0.8; ctx.beginPath(); ctx.arc(point.x, point.y, size, 0, Math.PI * 2); ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${alpha * 0.5})`; ctx.fill(); } ctx.beginPath(); ctx.arc(this.x, this.y, this.headSize * 2, 0, Math.PI*2); const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.headSize * 2); grad.addColorStop(0, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.8)`); grad.addColorStop(1, `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0)`); ctx.fillStyle = grad; ctx.fill(); ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(this.x, this.y, this.headSize * 0.6, 0, Math.PI*2); ctx.fill(); } }
+            
+            class UrchinSpike { constructor(x, y, angle, speed, depthScale) { this.x = x; this.y = y; this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed; this.friction = 0.93; this.gravity = 0.01 * scale; this.life = 80; this.maxLife = this.life; this.depthScale = depthScale; this.history = []; this.beadSize = random(4.5, 7.5) * scale * depthScale; } update() { this.history.push({x: this.x, y: this.y}); if(this.history.length > 5) this.history.shift(); this.vx *= this.friction; this.vy *= this.friction; this.vy += this.gravity; this.x += this.vx; this.y += this.vy; this.life--; if (this.life % 5 === 0 && Math.random() > 0.5) smokes.push(new Smoke(this.x, this.y)); if (this.life === 0) { createStaticOrb(this.x, this.y, this.depthScale, this.beadSize); return false; } return true; } draw() { if(this.history.length < 2) return; let alpha = 1; if (this.life < 10) alpha = this.life / 10; ctx.beginPath(); ctx.moveTo(this.history[0].x, this.history[0].y); ctx.lineTo(this.x, this.y); ctx.lineCap = 'round'; ctx.lineWidth = 1.5 * this.depthScale * scale; ctx.strokeStyle = `rgba(255, 230, 100, ${alpha})`; ctx.stroke(); const size = this.beadSize * alpha; ctx.drawImage(starCanvas, this.x - size, this.y - size, size * 2, size * 2); } }
+            
+            class StaticOrb { constructor(x, y, depthScale, startSize) { this.x = x; this.y = y; this.vx = random(-0.05, 0.05) * scale; this.vy = random(-0.05, 0.05) * scale; this.life = 90; this.maxLife = this.life; this.size = startSize * 1.6; this.twinkleOffset = random(0, 100); } update() { this.x += this.vx; this.y += this.vy; this.life--; return this.life > 0; } draw() { const progress = this.life / this.maxLife; let flicker = 0.8 + 0.2 * Math.sin(this.life * 0.2 + this.twinkleOffset); if (progress < 0.3) flicker *= (progress / 0.3); const currentSize = this.size * flicker; ctx.drawImage(starCanvas, this.x - currentSize, this.y - currentSize, currentSize * 2, currentSize * 2); } }
+            
+            class WillowParticle { constructor(x, y, angle, speed, colorType, depthScale) { this.x = x; this.y = y; this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed; this.friction = 0.92; this.gravity = 0.09 * scale; this.life = random(180, 250); this.maxLife = this.life; this.trail = []; this.maxTrail = 20; this.colorType = colorType; this.depthScale = depthScale; this.width = (colorType === 'gold' ? 3.0 : 2.0) * scale * depthScale; } update() { this.trail.push({x: this.x, y: this.y}); if(this.trail.length > this.maxTrail) this.trail.shift(); this.vx *= this.friction; this.vy *= this.friction; this.vy += this.gravity; this.x += this.vx; this.y += this.vy; this.life--; if(this.life % 8 === 0) smokes.push(new Smoke(this.x, this.y)); return this.life > 0; } draw() { if(this.trail.length < 2) return; const progress = this.life / this.maxLife; const alpha = Math.min(1, progress * 3); ctx.beginPath(); ctx.moveTo(this.trail[0].x, this.trail[0].y); for(let i=1; i<this.trail.length; i++) ctx.lineTo(this.trail[i].x, this.trail[i].y); ctx.lineTo(this.x, this.y); ctx.lineCap = 'round'; ctx.lineWidth = this.width * alpha; let strokeStyle; switch (this.colorType) { case 'gold': strokeStyle = `rgba(255, 240, 150, ${alpha})`; break; case 'red': strokeStyle = `rgba(255, 80, 80, ${alpha})`; break; case 'blue': strokeStyle = `rgba(80, 180, 255, ${alpha})`; break; case 'purple': strokeStyle = `rgba(220, 100, 255, ${alpha})`; break; case 'cyan': strokeStyle = `rgba(80, 255, 220, ${alpha})`; break; case 'lime': strokeStyle = `rgba(180, 255, 80, ${alpha})`; break; case 'magenta': strokeStyle = `rgba(255, 80, 220, ${alpha})`; break; case 'orange': strokeStyle = `rgba(255, 150, 50, ${alpha})`; break; case 'white': strokeStyle = `rgba(255, 255, 255, ${alpha})`; break; default: strokeStyle = `rgba(255, 240, 150, ${alpha})`; } ctx.strokeStyle = strokeStyle; ctx.stroke(); if (progress > 0.05) { const s = this.width * 2.5; ctx.drawImage(glowCanvas, this.x - s/2, this.y - s/2, s, s); } } }
+            
+            class Shell { constructor(x, y, targetX, targetY, type, depthScale) { this.x = x; this.y = y; this.targetY = targetY; this.type = type; this.depthScale = depthScale; const g = 0.2 * scale; const dy = y - targetY; const vy = Math.sqrt(2 * g * dy); const t = vy / g; const dx = targetX - x; const vx = dx / t; this.vx = vx; this.vy = -vy; this.gravity = g; this.isDead = false; } update() { this.vy += this.gravity; this.x += this.vx; this.y += this.vy; if (Math.random() > 0.7) smokes.push(new Smoke(this.x, this.y)); if (this.vy >= 0) { this.isDead = true; if(this.type === 'urchin') explodeUrchin(this.x, this.y, this.depthScale); else if(this.type === 'willow') explodeWillow(this.x, this.y, this.depthScale); for(let i=0; i<6; i++) smokes.push(new Smoke(this.x + random(-10,10), this.y + random(-10,10))); } return !this.isDead; } draw() { const size = 6 * scale * this.depthScale; ctx.drawImage(glowCanvas, this.x - size, this.y - size, size*2, size*2); ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x - this.vx*2.5, this.y - this.vy*2.5); ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255, 200, 100, 0.3)'; ctx.lineWidth = 8 * scale; ctx.stroke(); ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x - this.vx*2.5, this.y - this.vy*2.5); ctx.strokeStyle = 'rgba(255, 255, 220, 0.95)'; ctx.lineWidth = 3 * scale; ctx.stroke(); } }
+            
+            class DigitShell { constructor(startX, startY, targetX, targetY, digitChar) { this.x = startX; this.y = startY; this.targetY = targetY; this.digitChar = digitChar; this.isDead = false; const g = 0.12 * scale; const h = startY - targetY; const vy = Math.sqrt(2 * g * h); const t = vy / g; const vx = (targetX - startX) / t; this.vx = vx; this.vy = -vy; this.gravity = g; this.trail = []; } update() { this.trail.push({x: this.x, y: this.y}); if(this.trail.length > 8) this.trail.shift(); this.vy += this.gravity; this.x += this.vx; this.y += this.vy; if (this.vy >= 0) { this.isDead = true; explodeDigit(this.x, this.y, this.digitChar); for(let i=0; i<3; i++) smokes.push(new Smoke(this.x, this.y)); } return !this.isDead; } draw() { for (let i = 0; i < this.trail.length; i++) { const point = this.trail[i]; const progress = i / this.trail.length; const size = 3 * scale * progress; ctx.beginPath(); ctx.arc(point.x, point.y, size, 0, Math.PI * 2); ctx.fillStyle = `rgba(255, 255, 255, ${progress * 0.6})`; ctx.fill(); } ctx.beginPath(); ctx.arc(this.x, this.y, 4 * scale, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill(); } }
+            
+            class ShapeParticle { constructor(x, y, color) { this.x = x; this.y = y; this.color = color; this.img = particleCache[color] || particleCache['#FFFFFF']; const angle = random(0, Math.PI*2); const speed = random(0, 0.8) * scale; this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed; this.friction = 0.82; this.gravity = 0.003 * scale; this.life = 1000; this.maxLife = this.life; this.size = random(2, 3.5) * scale; this.blinkOffset = random(0, 100); } update() { this.vx *= this.friction; this.vy *= this.friction; this.vy += this.gravity; this.x += this.vx; this.y += this.vy; this.life--; return this.life > 0; } draw() { const blink = Math.abs(Math.sin(Date.now() * 0.005 + this.blinkOffset)); const alpha = 0.6 + 0.4 * blink; ctx.globalAlpha = alpha; const s = this.size * 2.5; ctx.drawImage(this.img, this.x - s/2, this.y - s/2, s, s); ctx.globalAlpha = 1.0; } }
+
+            // ================= 逻辑控制 =================
+            function createStaticOrb(x, y, depthScale, size) { particles.push(new StaticOrb(x, y, depthScale, size)); }
+            function explodeUrchin(x, y, depthScale) { const spikeCount = 120; for (let i = 0; i < spikeCount; i++) { const angle = (Math.PI * 2 / spikeCount) * i + random(-0.02, 0.02); const speed = random(10, 24) * scale * depthScale; particles.push(new UrchinSpike(x, y, angle, speed, depthScale)); } }
+            function explodeWillow(x, y, depthScale) { const count = 100; const colors = ['gold', 'red', 'blue', 'purple', 'cyan', 'lime', 'magenta', 'orange', 'white']; for(let i=0; i<count; i++) { const angle = random(0, Math.PI*2); const speed = random(5, 22) * scale * depthScale; const color = colors[Math.floor(Math.random() * colors.length)]; particles.push(new WillowParticle(x, y, angle, speed, color, depthScale)); } for(let k=0; k<20; k++) { const ang = random(0, Math.PI*2); const spd = random(2, 8) * scale * depthScale; particles.push(new Spark(x, y, Math.cos(ang)*spd, Math.sin(ang)*spd, true)); } }
+            
+            function getShapePoints(char) { const pts = []; const addBezier = (p0, p1, p2, p3, steps) => { for(let i=0; i<=steps; i++) { const t = i/steps; const u = 1 - t; const tt = t * t; const uu = u * u; const uuu = uu * u; const ttt = tt * t; const x = uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x; const y = uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y; pts.push({x: x, y: y}); } }; const addEllipse = (cx, cy, rx, ry, startAng, endAng, steps) => { for(let i=0; i<=steps; i++) { const t = startAng + (endAng - startAng) * (i/steps); pts.push({x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t)}); } }; 
+                if (char === '2') { addBezier({x: 0.2, y: 0.25}, {x: 0.2, y: -0.05}, {x: 0.8, y: -0.05}, {x: 0.8, y: 0.3}, 25); addBezier({x: 0.8, y: 0.3}, {x: 0.8, y: 0.45}, {x: 0.4, y: 0.7}, {x: 0.2, y: 0.9}, 25); addBezier({x: 0.2, y: 0.9}, {x: 0.5, y: 0.92}, {x: 0.8, y: 0.9}, {x: 0.85, y: 0.88}, 20); } 
+                else if (char === '0') { addEllipse(0.5, 0.5, 0.3, 0.45, 0, Math.PI * 2, 45); } 
+                else if (char === '6') { addBezier({x: 0.75, y: 0.1}, {x: 0.4, y: 0.0}, {x: 0.1, y: 0.4}, {x: 0.2, y: 0.7}, 35); addEllipse(0.5, 0.7, 0.3, 0.25, 0, Math.PI * 2, 40); } 
+                return pts; 
+            }
+            function explodeDigit(cx, cy, char) { const s = 100 * scale; const pts = getShapePoints(char); pts.forEach(pt => { const px = cx + (pt.x - 0.5) * s; const py = cy + (pt.y - 0.5) * s; for(let k=0; k<3; k++) { const jitterX = random(-3, 3) * scale; const jitterY = random(-3, 3) * scale; const col = shapeColors[Math.floor(Math.random() * shapeColors.length)]; particles.push(new ShapeParticle(px + jitterX, py + jitterY, col)); } }); for(let i=0; i<15; i++) { particles.push(new Spark(cx, cy, 0, 0, true)); } }
+
+            // --- 触发指定篇章 ---
+            function playChapter(targetChapter) {
+                // 允许顺序播放到下一章，或者在结束章(6)或重置章(0)后跳转到第1章
+                const isNext = targetChapter === currentChapter + 1;
+                const isReset = (currentChapter === 6 || currentChapter === 0) && targetChapter === 1;
+
+                if (isNext || isReset) {
+                    stopCurrentChapter();
+                    currentChapter = targetChapter;
+                    statusText.innerText = "CHAPTER " + currentChapter + " ACTIVE";
+                    statusText.style.color = "#FFD700";
+                    
+                    // 执行篇章逻辑
+                    switch(currentChapter) {
+                        case 1:
+                            launchFanSequence();
+                            schedule(() => launchCastleDiffusionSequence(), 480);
+                            schedule(() => launchCastleSalvoSequence(), 1680);
+                            schedule(() => launchThinCometSalvoSequence(), 2500);
+                            break;
+                        case 2:
+                            launchSideComets();
+                            schedule(() => launchUrchinSalvo(), 800);
+                            break;
+                        case 3:
+                            launchWillowSalvo();
+                            schedule(() => launchLowAccents(), 1600);
+                            break;
+                        case 4:
+                            launchCastleCrossSequence();
+                            schedule(() => launchOuterSalvoSequence(), 2200);
+                            break;
+                        case 5:
+                            launchFinaleFan();
+                            schedule(() => launchFinaleDiffusion(), 1500);
+                            schedule(() => launchFinaleClimax(), 3000);
+                            break;
+                        case 6: // Ending
+                            launchDigitFinale();
+                            statusText.innerText = "FINALE";
+                            setTimeout(() => { 
+                                currentChapter = 0; 
+                                statusText.innerText = "READY (Show 5)"; 
+                                statusText.style.color = "rgba(255,255,255,0.6)";
+                            }, 8000);
+                            break;
+                    }
+                }
+            }
+
+            // --- 篇章 1 函数 ---
+            function launchFanSequence() { 
+                const groundY = height - 20 * scale;
+                const castleLeft = castleLayout.x + castleLayout.width * 0.22;
+                const castleRight = castleLayout.x + castleLayout.width * 0.78;
+                const count = 5; 
+                const speed = 16.5 * scale; 
+                const leftStart = -130*(Math.PI/180); const leftStep = (50*(Math.PI/180))/4; 
+                const rightStart = -100*(Math.PI/180); const rightStep = (50*(Math.PI/180))/4; 
+                for (let i = 0; i < count; i++) { 
+                    schedule(() => { 
+                        comets.push(new Comet(castleLeft, groundY, leftStart + leftStep*i, speed, 'normal')); 
+                        comets.push(new Comet(castleRight, groundY, rightStart + rightStep*i, speed, 'normal')); 
+                    }, i * 150); 
+                } 
+            }
+            function launchCastleDiffusionSequence() { const cx = width/2; const cy = castleLayout.top + castleLayout.height * 0.2; const speed = 18*scale; const centerAngle = -Math.PI/2; const maxDeviation = 45*(Math.PI/180); const pairs = 4; const step = maxDeviation/pairs; comets.push(new Comet(cx, cy, centerAngle, speed, 'normal')); for (let i = 1; i <= pairs; i++) { schedule(() => { const deviation = step*i; comets.push(new Comet(cx, cy, centerAngle-deviation, speed, 'normal')); comets.push(new Comet(cx, cy, centerAngle+deviation, speed, 'normal')); }, i * 90); } }
+            function launchCastleSalvoSequence() { const cx = width/2; const cy = castleLayout.top + castleLayout.height * 0.3; const baseSpeed = 20*scale; const centerAngle = -Math.PI/2; const step = (45*(Math.PI/180))/4; let angles = [centerAngle]; for (let i = 1; i <= 4; i++) { angles.push(centerAngle-step*i); angles.push(centerAngle+step*i); } angles.forEach(angle => { const spd = baseSpeed * random(0.95, 1.05); const ang = angle + random(-0.015, 0.015); schedule(() => { comets.push(new Comet(cx, cy, ang, spd, 'hover')); }, random(0, 30)); }); }
+            function launchThinCometSalvoSequence() { 
+                const groundY = height-20*scale; 
+                const castleY = castleLayout.top + castleLayout.height * 0.4;
+                const cx = width/2; 
+                const points = []; 
+                for(let i=0; i<5; i++) points.push({x: width * 0.05 + i*25*scale, y: groundY});
+                for(let i=0; i<6; i++) points.push({x: cx - 100*scale + i*40*scale, y: castleY});
+                for(let i=0; i<5; i++) points.push({x: width * 0.95 - i*25*scale, y: groundY});
+                const baseSpeed = 19*scale; 
+                points.forEach(pt => { const clusterCount = Math.floor(random(3, 5)); for(let k=0; k<clusterCount; k++) { const ang = -Math.PI/2 + random(-0.15, 0.15); const spd = baseSpeed * random(0.8, 1.2); schedule(() => { comets.push(new Comet(pt.x, pt.y, ang, spd, 'thin')); }, random(0, 150)); } }); 
+            }
+            
+            // --- 篇章 2 ---
+            function launchSideComets() { const speed = 26 * scale; comets.push(new Comet(0, height, -60 * (Math.PI/180), speed, 'normal')); comets.push(new Comet(width, height, -120 * (Math.PI/180), speed, 'normal')); }
+            function launchUrchinSalvo() { const cx = width/2; const groundY = height-20*scale; const castleH = castleLayout.top + castleLayout.height * 0.3; const clusters = [ { x: cx-350*scale, y: groundY, count: 2, depth: 0.9, targetH: height*0.4 }, { x: cx, y: castleH, count: 3, depth: 1.15, targetH: height*0.32 }, { x: cx+350*scale, y: groundY, count: 2, depth: 0.9, targetH: height*0.4 } ]; clusters.forEach(cluster => { for(let i=0; i<cluster.count; i++) { const offsetX = (i-(cluster.count-1)/2)*80*scale; schedule(() => { particles.push(new Shell(cluster.x+offsetX+random(-10,10), cluster.y, cluster.x+offsetX, cluster.targetH+random(-25,25), 'urchin', cluster.depth)); }, random(0, 300)); } }); }
+            
+            // --- 篇章 3 ---
+            function launchWillowSalvo() { const cx = width / 2; const castleTop = castleLayout.top + castleLayout.height * 0.1; const targetBaseY = height * 0.2; const spreadW = width * 0.7; const startX = cx - spreadW / 2; const stepX = spreadW / 6; for(let i=0; i<7; i++) { const targetX = startX + stepX * i; const targetY = targetBaseY + random(-50, 50) * scale; const depth = random(0.8, 1.2); schedule(() => { particles.push(new Shell(cx, castleTop, targetX, targetY, 'willow', depth)); }, i * 150 + random(0, 50)); } }
+            function launchLowAccents() { const groundY = height - 20 * scale; const leftBase = width * 0.1; const rightBase = width * 0.9; const speed = 16 * scale; for(let i=0; i<5; i++) { schedule(() => { comets.push(new Comet(leftBase+random(-60,60)*scale, groundY, -Math.PI/2 + 0.3 + random(-0.15, 0.15), speed, 'thin')); }, i * 100); } for(let i=0; i<5; i++) { schedule(() => { comets.push(new Comet(rightBase+random(-60,60)*scale, groundY, -Math.PI/2 - 0.3 + random(-0.15, 0.15), speed, 'thin')); }, i * 100); } }
+            
+            // --- 篇章 4 ---
+            function launchCastleCrossSequence() { const cx = width / 2; const groundY = height - 20 * scale; const speed = 14.5 * scale; const offsets = [60, 100, 140, 180, 220].map(o => o * scale); const colors = [{r:255,g:50,b:50}, {r:50,g:150,b:255}, {r:255,g:200,b:50}, {r:200,g:50,b:255}, {r:50,g:255,b:100}]; for (let i = 0; i < 5; i++) { const col = colors[i % colors.length]; const leftOffset = offsets[i]; const rightOffset = offsets[i]; schedule(() => { comets.push(new Comet(cx - leftOffset, groundY, -75 * (Math.PI / 180), speed, 'normal', col)); }, i * 400); schedule(() => { comets.push(new Comet(cx + rightOffset, groundY, -105 * (Math.PI / 180), speed, 'normal', col)); }, i * 400 + 200); } }
+            function launchOuterSalvoSequence() { const groundY = height - 20 * scale; const leftBase = width * 0.15; const rightBase = width * 0.85; const speed = 15.5 * scale; const colors = [{r:255,g:80,b:80}, {r:80,g:255,b:80}, {r:80,g:80,b:255}, {r:255,g:200,b:50}]; for(let i=0; i<4; i++) { const x = leftBase + (i - 1.5) * 35 * scale; comets.push(new Comet(x, groundY, -Math.PI/2 + random(-0.03, 0.03), speed, 'normal', colors[i])); } for(let i=0; i<4; i++) { const x = rightBase + (i - 1.5) * 35 * scale; comets.push(new Comet(x, groundY, -Math.PI/2 + random(-0.03, 0.03), speed, 'normal', colors[3-i])); } }
+            
+            // --- 篇章 5 ---
+            function launchFinaleFan() { 
+                const groundY = height - 20 * scale;
+                const launchLeft = castleLayout.x + castleLayout.width * 0.25;
+                const launchRight = castleLayout.x + castleLayout.width * 0.75;
+                const count = 7; const speed = 16 * scale; 
+                const colors = [{r:255,g:50,b:50}, {r:50,g:150,b:255}, {r:255,g:200,b:50}, {r:200,g:50,b:255}, {r:50,g:255,b:100}, {r:255,g:100,b:200}, {r:100,g:255,b:255}]; 
+                const leftStart = -120*(Math.PI/180); const leftStep = (40*(Math.PI/180))/6; 
+                const rightStart = -100*(Math.PI/180); const rightStep = (40*(Math.PI/180))/6; 
+                for (let i = 0; i < count; i++) { 
+                    const col = colors[i % colors.length]; 
+                    schedule(() => { 
+                        comets.push(new Comet(launchLeft, groundY, leftStart + leftStep*i, speed, 'normal', col)); 
+                        comets.push(new Comet(launchRight, groundY, rightStart + rightStep*i, speed, 'normal', col)); 
+                    }, i * 100); 
+                } 
+            }
+            function launchFinaleDiffusion() { const cx = width/2; const cy = castleLayout.top + castleLayout.height * 0.2; const speed = 15 * scale; const centerAngle = -Math.PI/2; const maxDeviation = 60*(Math.PI/180); const pairs = 6; const step = maxDeviation/pairs; const colors = [{r:255,g:80,b:80}, {r:80,g:255,b:80}, {r:80,g:80,b:255}, {r:255,g:200,b:50}]; comets.push(new Comet(cx, cy, centerAngle, speed, 'normal', colors[0])); for (let i = 1; i <= pairs; i++) { schedule(() => { const col = colors[i % colors.length]; const deviation = step*i; comets.push(new Comet(cx, cy, centerAngle-deviation, speed, 'normal', col)); comets.push(new Comet(cx, cy, centerAngle+deviation, speed, 'normal', col)); }, i * 80); } }
+            function launchFinaleClimax() { const cx = width / 2; const castleTop = castleLayout.top; for(let i=0; i<5; i++) { schedule(() => { particles.push(new Shell(cx + random(-250, 250)*scale, castleTop, cx + random(-350, 350)*scale, height*0.25 + random(-30, 30)*scale, 'urchin', 1.3)); }, i * 800); } schedule(() => { for(let i=0; i<8; i++) { schedule(() => { const tx = width * 0.15 + (width * 0.7) * (i/7) + random(-50,50)*scale; particles.push(new Shell(cx, castleTop, tx, height*0.2 + random(-20, 20)*scale, 'willow', 1.4)); }, i * 500); } }, 4500); }
+
+            // --- 篇章 6 (Ending) ---
+            function launchDigitFinale() {
+                const cx = width / 2;
+                const groundY = height - 20 * scale;
+                const targetH = height * 0.35;
+                const spacing = 130 * scale; 
+                const digits = ['2', '0', '2', '6'];
+                const totalW = (digits.length - 1) * spacing;
+                const startX = cx - totalW / 2;
+                digits.forEach((d, i) => {
+                    const tx = startX + i * spacing;
+                    const bx = cx + (i - 1.5) * (castleLayout.width * 0.4); 
+                    for(let k=0; k<5; k++) { schedule(() => { particles.push(new DigitShell(bx + random(-15,15)*scale, groundY, tx, targetH, d)); }, k * 90); }
+                });
+            }
+
+            // --- 绘制 & 循环 ---
+            function drawCastleFallback(cx, top, w, h) {
+                // 更精细的备用城堡
+                ctx.save();
+                ctx.fillStyle = '#0a0a1a'; // 深蓝色基底
+                
+                // 1. Base Block
+                ctx.fillRect(cx - w*0.3, top + h*0.6, w*0.6, h*0.4);
+                
+                // 2. Central Tower
+                ctx.fillRect(cx - w*0.15, top + h*0.3, w*0.3, h*0.7);
+                // Central Spire
+                ctx.beginPath();
+                ctx.moveTo(cx - w*0.16, top + h*0.3);
+                ctx.lineTo(cx + w*0.16, top + h*0.3);
+                ctx.lineTo(cx, top); // Peak
+                ctx.fillStyle = '#050510';
+                ctx.fill();
+
+                // 3. Side Towers (Left)
+                ctx.fillRect(cx - w*0.35, top + h*0.45, w*0.1, h*0.55);
+                ctx.beginPath();
+                ctx.moveTo(cx - w*0.36, top + h*0.45);
+                ctx.lineTo(cx - w*0.24, top + h*0.45);
+                ctx.lineTo(cx - w*0.3, top + h*0.25);
+                ctx.fill();
+
+                // 4. Side Towers (Right)
+                ctx.fillRect(cx + w*0.25, top + h*0.45, w*0.1, h*0.55);
+                ctx.beginPath();
+                ctx.moveTo(cx + w*0.24, top + h*0.45);
+                ctx.lineTo(cx + w*0.36, top + h*0.45);
+                ctx.lineTo(cx + w*0.3, top + h*0.25);
+                ctx.fill();
+
+                // 5. Windows (Glowing)
+                ctx.fillStyle = `rgba(255, 220, 100, ${0.1 + Math.random()*0.1})`;
+                ctx.fillRect(cx - w*0.02, top + h*0.5, w*0.04, h*0.06); // Center window
+                ctx.fillRect(cx - w*0.31, top + h*0.6, w*0.02, h*0.04); // Left window
+                ctx.fillRect(cx + w*0.29, top + h*0.6, w*0.02, h*0.04); // Right window
+
+                ctx.restore();
+            }
+
+            function drawCastle() {
+                const flashIntensity = Math.min(castleFlash * 2.5, 1.2); 
+
+                if (castleLoaded && castleImg.naturalWidth > 0) {
+                    if (isFinite(castleLayout.height)) {
+                        ctx.save();
+                        ctx.filter = `brightness(${1.0 + flashIntensity})`;
+                        ctx.drawImage(castleImg, castleLayout.x, castleLayout.top, castleLayout.width, castleLayout.height);
+                        ctx.restore();
+                    }
+                } else {
+                    // 如果图片没加载出来，画一个比较好看的剪影
+                    const cx = width/2;
+                    // 稍微受闪光影响亮度
+                    ctx.save();
+                    const lightness = 10 + flashIntensity * 20; 
+                    ctx.filter = `brightness(${1.0 + flashIntensity})`;
+                    drawCastleFallback(cx, castleLayout.top, castleLayout.width, castleLayout.height);
+                    ctx.restore();
+                }
+            }
+
+            function drawStars() {
+                ctx.globalCompositeOperation = 'source-over'; 
+                stars.forEach(star => {
+                    const flicker = 0.8 + 0.2 * Math.sin(Date.now() * star.flickerSpeed);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha * flicker})`;
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            // --- 键盘控制 (Fallback) ---
+            window.addEventListener('keydown', (e) => {
+                let target = -1;
+                switch(e.key) {
+                    case '1': target = 1; break;
+                    case '2': target = 2; break;
+                    case '3': target = 3; break;
+                    case '4': target = 4; break;
+                    case '5': target = 5; break;
+                    case '0': target = 6; break;
+                }
+                if (target !== -1) {
+                    loadingText.style.display = 'none'; // 按键时隐藏loading
+                    triggerChapter(target);
+                }
+            });
+
+            // 统一的触发逻辑
+            function triggerChapter(target) {
+                // 允许逻辑：
+                // 1. 如果是下一章 (current + 1)
+                // 2. 如果当前是 Ending (6)，允许重置 (1)
+                // 3. 如果当前是未开始 (0)，允许开始 (1)
+                // 4. 调试模式方便：直接允许跳转任意章节 (实际展示时可能更灵活)
+                
+                // 为了演示流畅，这里稍微放宽限制：只要不是当前章就可以跳（方便回退测试）
+                if (target !== currentChapter) {
+                    // 特殊约束：Ending 期间最好让它放完，除非强行重置
+                    playChapter(target);
+                }
+            }
+
+            // 手势识别设置
+            const videoElement = document.getElementsByClassName('input_video')[0];
+            let lastGestureTime = 0;
+            const GESTURE_COOLDOWN = 1200; 
+            
+            function onResults(results) {
+                if (loadingText.style.display !== 'none' && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    loadingText.style.display = 'none';
+                }
+                
+                gestureCtx.save();
+                gestureCtx.clearRect(0, 0, gestureCanvas.width, gestureCanvas.height);
+                
+                if (results.multiHandLandmarks) {
+                    for (const landmarks of results.multiHandLandmarks) {
+                        drawConnectors(gestureCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(0, 255, 0, 0.5)', lineWidth: 2});
+                        drawLandmarks(gestureCtx, landmarks, {color: 'rgba(255, 0, 0, 0.5)', lineWidth: 1, radius: 2});
+                        
+                        const fingers = countFingers(landmarks);
+                        const now = Date.now();
+
+                        if (now - lastGestureTime > GESTURE_COOLDOWN) {
+                            let target = -1;
+                            if (fingers === 5) target = 1;
+                            else if (fingers === 4) target = 2;
+                            else if (fingers === 3) target = 3;
+                            else if (fingers === 2) target = 4;
+                            else if (fingers === 1) target = 5;
+                            else if (fingers === 0) target = 6; // Fist
+
+                            if (target !== -1) {
+                                // 手势模式下，为了防止误触，我们严格遵循 顺序逻辑
+                                if (target === currentChapter + 1 || (currentChapter === 6 && target === 1) || (currentChapter === 0 && target === 1)) {
+                                    triggerChapter(target);
+                                    lastGestureTime = now;
+                                }
+                            }
+                        }
+                    }
+                }
+                gestureCtx.restore();
+            }
+
+            function countFingers(landmarks) {
+                let count = 0;
+                const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x-p2.x, 2) + Math.pow(p1.y-p2.y, 2));
+                // 拇指 (比较指尖和指关节相对于手腕的距离，这种简易算法对于正面手掌比较准)
+                // 更稳健的拇指：比较指尖x坐标和IP关节x坐标（根据左右手不同），这里简化处理
+                if (dist(landmarks[4], landmarks[0]) > dist(landmarks[3], landmarks[0]) * 1.1) count++;
+                
+                // 其他四指：比较指尖和指根到手腕的距离
+                if (dist(landmarks[8], landmarks[0]) > dist(landmarks[6], landmarks[0]) * 1.1) count++; 
+                if (dist(landmarks[12], landmarks[0]) > dist(landmarks[10], landmarks[0]) * 1.1) count++; 
+                if (dist(landmarks[16], landmarks[0]) > dist(landmarks[14], landmarks[0]) * 1.1) count++; 
+                if (dist(landmarks[20], landmarks[0]) > dist(landmarks[18], landmarks[0]) * 1.1) count++; 
+                return count;
+            }
+
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+            hands.onResults(onResults);
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 320,
+                height: 240
+            });
+            // 尝试启动摄像头，但不阻塞主线程
+            camera.start().catch(e => {
+                console.log("Camera failed to start, use keyboard fallback.", e);
+                loadingText.innerHTML = "摄像头启动失败<br>请使用数字键 1-5 控制烟花";
+            });
+
+            // 主循环
+            function loop() {
+                requestAnimationFrame(loop);
+
+                // 计算亮度
+                const targetFlash = (particles.length * 0.0005) + (comets.length * 0.005);
+                castleFlash += (targetFlash - castleFlash) * 0.1;
+
+                // 背景 (轻微拖尾效果)
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = 'rgba(2, 4, 12, 0.2)'; 
+                ctx.fillRect(0, 0, width, height);
+
+                drawStars();
+                drawCastle();
+
+                ctx.globalCompositeOperation = 'source-over'; 
+                let sIndex = smokes.length; while(sIndex--) { if(!smokes[sIndex].update()) smokes.splice(sIndex, 1); else smokes[sIndex].draw(); }
+                
+                ctx.globalCompositeOperation = 'lighter'; 
+                let pIndex = particles.length; while(pIndex--) { if(!particles[pIndex].update()) particles.splice(pIndex, 1); else particles[pIndex].draw(); }
+                let cIndex = comets.length; while(cIndex--) { if(!comets[cIndex].update()) comets.splice(cIndex, 1); else comets[cIndex].draw(); }
+            }
+
+            loop();
+        });
+    </script>
+</body>
+</html>
